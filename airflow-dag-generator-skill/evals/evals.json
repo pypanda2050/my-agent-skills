@@ -1,0 +1,116 @@
+{
+  "skill_name": "airflow-dag-generator-skill",
+  "evals": [
+    {
+      "id": 1,
+      "name": "sync-etl-cron",
+      "prompt": "Generate an Airflow 3.0 DAG that runs a classic extract -> transform -> load pipeline every day at 6am UTC.",
+      "spec": {
+        "dag_id": "sync_etl_daily",
+        "dag_type": "sync",
+        "schedule": "0 6 * * *",
+        "start_date": "2024-01-01",
+        "tags": ["sync", "etl"],
+        "catchup": false,
+        "tasks": [{"id": "extract"}, {"id": "transform"}, {"id": "load"}]
+      },
+      "assertions": [
+        {"name": "uses_task_sdk_import", "type": "contains", "value": "from airflow.sdk import"},
+        {"name": "cron_schedule_set", "type": "contains", "value": "schedule=\"0 6 * * *\""},
+        {"name": "catchup_false", "type": "contains", "value": "catchup=False"},
+        {"name": "no_legacy_schedule_interval", "type": "not_contains", "value": "schedule_interval"},
+        {"name": "passes_validator", "type": "validator_pass"}
+      ]
+    },
+    {
+      "id": 2,
+      "name": "async-asset-consumer",
+      "prompt": "Create an Airflow 3.0 DAG that runs automatically whenever the asset s3://warehouse/clean_orders is updated (data-aware scheduling).",
+      "spec": {
+        "dag_id": "aggregate_orders",
+        "dag_type": "async_asset",
+        "start_date": "2024-01-01",
+        "tags": ["async", "assets"],
+        "catchup": false,
+        "assets_in": ["s3://warehouse/clean_orders"]
+      },
+      "assertions": [
+        {"name": "imports_asset", "type": "contains", "value": "Asset"},
+        {"name": "schedules_on_asset", "type": "contains", "value": "schedule=[Asset(\"s3://warehouse/clean_orders\")]"},
+        {"name": "no_legacy_dataset", "type": "not_contains", "value": "from airflow.datasets"},
+        {"name": "passes_validator", "type": "validator_pass"}
+      ]
+    },
+    {
+      "id": 3,
+      "name": "event-driven-sqs",
+      "prompt": "I need an event-driven Airflow 3.0 DAG that fires every time a message lands on my SQS queue https://sqs.us-east-1.amazonaws.com/123456789012/ingest-queue.",
+      "spec": {
+        "dag_id": "event_ingest",
+        "dag_type": "event_driven",
+        "start_date": "2024-01-01",
+        "tags": ["event-driven", "sqs"],
+        "catchup": false,
+        "queue": {"type": "sqs", "uri": "https://sqs.us-east-1.amazonaws.com/123456789012/ingest-queue"}
+      },
+      "assertions": [
+        {"name": "uses_asset_watcher", "type": "contains", "value": "AssetWatcher"},
+        {"name": "uses_sqs_trigger", "type": "contains", "value": "SqsSensorTrigger"},
+        {"name": "schedules_on_event_asset", "type": "contains", "value": "schedule=[event_asset]"},
+        {"name": "passes_validator", "type": "validator_pass"}
+      ]
+    },
+    {
+      "id": 4,
+      "name": "beam-python-dataflow",
+      "prompt": "Generate a daily Airflow 3.0 DAG whose only job is to launch an Apache Beam Python pipeline (gs://my-bucket/pipelines/wordcount.py) on Google Cloud Dataflow.",
+      "spec": {
+        "dag_id": "beam_dataflow_daily",
+        "dag_type": "time_interval",
+        "schedule": "@daily",
+        "start_date": "2024-01-01",
+        "tags": ["beam", "dataflow"],
+        "catchup": false,
+        "beam": {
+          "language": "python",
+          "runner": "DataflowRunner",
+          "py_file": "gs://my-bucket/pipelines/wordcount.py",
+          "options": {"project": "my-proj", "region": "us-central1", "tempLocation": "gs://my-bucket/tmp/"}
+        }
+      },
+      "assertions": [
+        {"name": "uses_beam_python_operator", "type": "contains", "value": "BeamRunPythonPipelineOperator"},
+        {"name": "dataflow_runner", "type": "contains", "value": "BeamRunnerType.DataflowRunner"},
+        {"name": "deferrable_async", "type": "contains", "value": "deferrable=True"},
+        {"name": "passes_validator", "type": "validator_pass"}
+      ]
+    },
+    {
+      "id": 5,
+      "name": "beam-java-flink",
+      "prompt": "Create an Airflow 3.0 DAG that runs an Apache Beam Java pipeline (jar at /opt/jars/stream.jar, class com.example.StreamJob) on an Apache Flink cluster, scheduled every 4 hours.",
+      "spec": {
+        "dag_id": "beam_flink_4h",
+        "dag_type": "time_interval",
+        "schedule": "timedelta:hours=4",
+        "start_date": "2024-01-01",
+        "tags": ["beam", "flink", "java"],
+        "catchup": false,
+        "beam": {
+          "language": "java",
+          "runner": "FlinkRunner",
+          "jar": "/opt/jars/stream.jar",
+          "job_class": "com.example.StreamJob",
+          "options": {"flink_master": "flink-jobmanager:8081"}
+        }
+      },
+      "assertions": [
+        {"name": "uses_beam_java_operator", "type": "contains", "value": "BeamRunJavaPipelineOperator"},
+        {"name": "flink_runner", "type": "contains", "value": "BeamRunnerType.FlinkRunner"},
+        {"name": "timedelta_schedule", "type": "contains", "value": "schedule=timedelta(hours=4)"},
+        {"name": "job_class_set", "type": "contains", "value": "com.example.StreamJob"},
+        {"name": "passes_validator", "type": "validator_pass"}
+      ]
+    }
+  ]
+}
