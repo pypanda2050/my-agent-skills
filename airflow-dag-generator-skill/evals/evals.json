@@ -1,0 +1,212 @@
+{
+  "skill_name": "airflow-dag-generator-skill",
+  "evals": [
+    {
+      "id": 1,
+      "name": "sync-etl-cron",
+      "prompt": "Generate an Airflow 3.0 DAG that runs a classic extract -> transform -> load pipeline every day at 6am UTC.",
+      "spec": {
+        "dag_id": "sync_etl_daily",
+        "dag_type": "sync",
+        "schedule": "0 6 * * *",
+        "start_date": "2024-01-01",
+        "tags": ["sync", "etl"],
+        "catchup": false,
+        "tasks": [{"id": "extract"}, {"id": "transform"}, {"id": "load"}]
+      },
+      "assertions": [
+        {"name": "uses_task_sdk_import", "type": "contains", "value": "from airflow.sdk import"},
+        {"name": "cron_schedule_set", "type": "contains", "value": "schedule=\"0 6 * * *\""},
+        {"name": "catchup_false", "type": "contains", "value": "catchup=False"},
+        {"name": "no_legacy_schedule_interval", "type": "not_contains", "value": "schedule_interval"},
+        {"name": "passes_validator", "type": "validator_pass"}
+      ]
+    },
+    {
+      "id": 2,
+      "name": "async-asset-consumer",
+      "prompt": "Create an Airflow 3.0 DAG that runs automatically whenever the asset s3://warehouse/clean_orders is updated (data-aware scheduling).",
+      "spec": {
+        "dag_id": "aggregate_orders",
+        "dag_type": "async_asset",
+        "start_date": "2024-01-01",
+        "tags": ["async", "assets"],
+        "catchup": false,
+        "assets_in": ["s3://warehouse/clean_orders"]
+      },
+      "assertions": [
+        {"name": "imports_asset", "type": "contains", "value": "Asset"},
+        {"name": "schedules_on_asset", "type": "contains", "value": "schedule=[Asset(\"s3://warehouse/clean_orders\")]"},
+        {"name": "no_legacy_dataset", "type": "not_contains", "value": "from airflow.datasets"},
+        {"name": "passes_validator", "type": "validator_pass"}
+      ]
+    },
+    {
+      "id": 3,
+      "name": "event-driven-sqs",
+      "prompt": "I need an event-driven Airflow 3.0 DAG that fires every time a message lands on my SQS queue https://sqs.us-east-1.amazonaws.com/123456789012/ingest-queue.",
+      "spec": {
+        "dag_id": "event_ingest",
+        "dag_type": "event_driven",
+        "start_date": "2024-01-01",
+        "tags": ["event-driven", "sqs"],
+        "catchup": false,
+        "queue": {"type": "sqs", "uri": "https://sqs.us-east-1.amazonaws.com/123456789012/ingest-queue"}
+      },
+      "assertions": [
+        {"name": "uses_asset_watcher", "type": "contains", "value": "AssetWatcher"},
+        {"name": "uses_sqs_trigger", "type": "contains", "value": "SqsSensorTrigger"},
+        {"name": "schedules_on_event_asset", "type": "contains", "value": "schedule=[event_asset]"},
+        {"name": "passes_validator", "type": "validator_pass"}
+      ]
+    },
+    {
+      "id": 4,
+      "name": "beam-python-dataflow",
+      "prompt": "Generate a daily Airflow 3.0 DAG whose only job is to launch an Apache Beam Python pipeline (gs://my-bucket/pipelines/wordcount.py) on Google Cloud Dataflow.",
+      "spec": {
+        "dag_id": "beam_dataflow_daily",
+        "dag_type": "time_interval",
+        "schedule": "@daily",
+        "start_date": "2024-01-01",
+        "tags": ["beam", "dataflow"],
+        "catchup": false,
+        "beam": {
+          "language": "python",
+          "runner": "DataflowRunner",
+          "py_file": "gs://my-bucket/pipelines/wordcount.py",
+          "options": {"project": "my-proj", "region": "us-central1", "tempLocation": "gs://my-bucket/tmp/"}
+        }
+      },
+      "assertions": [
+        {"name": "uses_beam_python_operator", "type": "contains", "value": "BeamRunPythonPipelineOperator"},
+        {"name": "dataflow_runner", "type": "contains", "value": "BeamRunnerType.DataflowRunner"},
+        {"name": "deferrable_async", "type": "contains", "value": "deferrable=True"},
+        {"name": "passes_validator", "type": "validator_pass"}
+      ]
+    },
+    {
+      "id": 5,
+      "name": "beam-java-flink",
+      "prompt": "Create an Airflow 3.0 DAG that runs an Apache Beam Java pipeline (jar at /opt/jars/stream.jar, class com.example.StreamJob) on an Apache Flink cluster, scheduled every 4 hours.",
+      "spec": {
+        "dag_id": "beam_flink_4h",
+        "dag_type": "time_interval",
+        "schedule": "timedelta:hours=4",
+        "start_date": "2024-01-01",
+        "tags": ["beam", "flink", "java"],
+        "catchup": false,
+        "beam": {
+          "language": "java",
+          "runner": "FlinkRunner",
+          "jar": "/opt/jars/stream.jar",
+          "job_class": "com.example.StreamJob",
+          "options": {"flink_master": "flink-jobmanager:8081"}
+        }
+      },
+      "assertions": [
+        {"name": "uses_beam_java_operator", "type": "contains", "value": "BeamRunJavaPipelineOperator"},
+        {"name": "flink_runner", "type": "contains", "value": "BeamRunnerType.FlinkRunner"},
+        {"name": "timedelta_schedule", "type": "contains", "value": "schedule=timedelta(hours=4)"},
+        {"name": "job_class_set", "type": "contains", "value": "com.example.StreamJob"},
+        {"name": "passes_validator", "type": "validator_pass"}
+      ]
+    },
+    {
+      "id": 6,
+      "name": "fan-out-fan-in-diamond",
+      "prompt": "Generate a daily Airflow 3.0 DAG with a diamond dependency: an ingest task fans out to three parallel clean tasks, which all fan in to a single publish task.",
+      "spec": {
+        "dag_id": "diamond_pipeline",
+        "dag_type": "sync",
+        "schedule": "@daily",
+        "start_date": "2024-01-01",
+        "tags": ["dependencies", "diamond"],
+        "catchup": false,
+        "tasks": [{"id": "ingest"}, {"id": "clean_a"}, {"id": "clean_b"}, {"id": "clean_c"}, {"id": "publish"}],
+        "dependencies": {"pattern": "diamond"}
+      },
+      "assertions": [
+        {"name": "uses_chain", "type": "contains", "value": "chain"},
+        {"name": "fans_out_to_parallel_list", "type": "contains", "value": "chain(ingest, [clean_a, clean_b, clean_c], publish)"},
+        {"name": "imports_chain", "type": "contains", "value": "chain"},
+        {"name": "passes_validator", "type": "validator_pass"}
+      ]
+    },
+    {
+      "id": 7,
+      "name": "cross-dependencies",
+      "prompt": "Create an Airflow 3.0 DAG where two extract tasks each feed both of two load tasks (cross/all-to-all dependency), running hourly.",
+      "spec": {
+        "dag_id": "cross_pipeline",
+        "dag_type": "sync",
+        "schedule": "@hourly",
+        "start_date": "2024-01-01",
+        "tags": ["dependencies", "cross"],
+        "catchup": false,
+        "tasks": [{"id": "extract_x"}, {"id": "extract_y"}, {"id": "load_p"}, {"id": "load_q"}],
+        "dependencies": {"pattern": "cross", "groups": [["extract_x", "extract_y"], ["load_p", "load_q"]]}
+      },
+      "assertions": [
+        {"name": "uses_cross_downstream", "type": "contains", "value": "cross_downstream([extract_x, extract_y], [load_p, load_q])"},
+        {"name": "imports_cross_downstream", "type": "contains", "value": "cross_downstream"},
+        {"name": "passes_validator", "type": "validator_pass"}
+      ]
+    },
+    {
+      "id": 8,
+      "name": "hybrid-webhook-event-asset-timefloor",
+      "prompt": "I need a hybrid Airflow 3.0 DAG that runs when EITHER a webhook fires (webhook://orders/created), OR a message lands on my SQS queue https://sqs.us-east-1.amazonaws.com/123456789012/ingest, OR the upstream asset s3://warehouse/clean_orders updates — and at minimum every hour as a floor.",
+      "spec": {
+        "dag_id": "hybrid_full",
+        "dag_type": "hybrid",
+        "start_date": "2024-01-01",
+        "tags": ["hybrid", "webhook", "event-driven", "asset"],
+        "catchup": false,
+        "hybrid": {
+          "combine": "any",
+          "webhooks": ["webhook://orders/created"],
+          "events": [{"type": "sqs", "uri": "https://sqs.us-east-1.amazonaws.com/123456789012/ingest"}],
+          "assets": ["s3://warehouse/clean_orders"],
+          "time_floor_cron": "0 * * * *"
+        },
+        "tasks": [{"id": "route"}]
+      },
+      "assertions": [
+        {"name": "uses_asset_or_time_schedule", "type": "contains", "value": "AssetOrTimeSchedule"},
+        {"name": "uses_cron_floor", "type": "contains", "value": "CronTriggerTimetable(\"0 * * * *\""},
+        {"name": "combines_with_assetany", "type": "contains", "value": "AssetAny("},
+        {"name": "includes_webhook_asset", "type": "contains", "value": "Asset(\"webhook://orders/created\")"},
+        {"name": "includes_upstream_asset", "type": "contains", "value": "Asset(\"s3://warehouse/clean_orders\")"},
+        {"name": "includes_event_watcher", "type": "contains", "value": "AssetWatcher"},
+        {"name": "uses_sqs_trigger", "type": "contains", "value": "SqsSensorTrigger"},
+        {"name": "passes_validator", "type": "validator_pass"}
+      ]
+    },
+    {
+      "id": 9,
+      "name": "hybrid-event-or-asset-and",
+      "prompt": "Create an Airflow 3.0 DAG that only runs when BOTH the staging asset s3://stage/ready is updated AND a go-signal message arrives on SQS queue https://sqs.us-east-1.amazonaws.com/123456789012/go.",
+      "spec": {
+        "dag_id": "hybrid_and",
+        "dag_type": "hybrid",
+        "start_date": "2024-01-01",
+        "tags": ["hybrid", "asset", "event-driven"],
+        "catchup": false,
+        "hybrid": {
+          "combine": "all",
+          "assets": ["s3://stage/ready"],
+          "events": [{"type": "sqs", "uri": "https://sqs.us-east-1.amazonaws.com/123456789012/go"}]
+        },
+        "tasks": [{"id": "process"}]
+      },
+      "assertions": [
+        {"name": "uses_assetall", "type": "contains", "value": "AssetAll("},
+        {"name": "no_time_floor", "type": "not_contains", "value": "AssetOrTimeSchedule"},
+        {"name": "includes_staging_asset", "type": "contains", "value": "Asset(\"s3://stage/ready\")"},
+        {"name": "includes_event_watcher", "type": "contains", "value": "AssetWatcher"},
+        {"name": "passes_validator", "type": "validator_pass"}
+      ]
+    }
+  ]
+}
