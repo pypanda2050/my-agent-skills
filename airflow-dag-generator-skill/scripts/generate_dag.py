@@ -62,6 +62,28 @@ def _imports(spec: dict) -> str:
         lines[-1] = "from airflow.sdk import dag, task, Asset"
     if dag_type == "event_driven":
         lines[-1] = "from airflow.sdk import dag, task, Asset, AssetWatcher"
+    if dag_type == "hybrid":
+        lines[-1] = "from airflow.sdk import dag, task, Asset, AssetAny, AssetAll, AssetWatcher"
+        hy = spec.get("hybrid", {})
+        if hy.get("time_floor_cron"):
+            lines.append(
+                "from airflow.timetables.assets import AssetOrTimeSchedule"
+            )
+            lines.append(
+                "from airflow.timetables.trigger import CronTriggerTimetable"
+            )
+        if any(e.get("type") == "sqs" for e in hy.get("events", [])):
+            lines.append(
+                "from airflow.providers.amazon.aws.triggers.sqs import SqsSensorTrigger"
+            )
+    # Dependency-wiring helpers
+    deps = spec.get("dependencies", {})
+    pattern = deps.get("pattern")
+    sdk_import = next(i for i, l in enumerate(lines) if l.startswith("from airflow.sdk import"))
+    if pattern in ("linear", "fan_out", "fan_in", "diamond") and "chain" not in lines[sdk_import]:
+        lines[sdk_import] += ", chain"
+    if pattern == "cross":
+        lines[sdk_import] += ", cross_downstream"
     beam = spec.get("beam")
     if beam:
         if beam["language"] == "python":
@@ -113,8 +135,86 @@ def _schedule_block(spec: dict) -> tuple[str, str]:
         return expr, "# Data-aware: runs when these assets update"
     if dag_type == "event_driven":
         return "[event_asset]", "# Event-driven: runs on each watched-queue message"
+    if dag_type == "hybrid":
+        hy = spec.get("hybrid", {})
+        combine = "AssetAll" if hy.get("combine") == "all" else "AssetAny"
+        members = []
+        members += [f"Asset({json.dumps(u)})" for u in hy.get("assets", [])]
+        members += [f"Asset({json.dumps(w)})" for w in hy.get("webhooks", [])]
+        members += [f"_event_{i}" for i in range(len(hy.get("events", [])))]
+        asset_expr = f"{combine}(" + ", ".join(members) + ")"
+        if hy.get("time_floor_cron"):
+            expr = (
+                "AssetOrTimeSchedule(\n"
+                f'        timetable=CronTriggerTimetable({json.dumps(hy["time_floor_cron"])}, timezone="UTC"),\n'
+                f"        assets={asset_expr},\n"
+                "    )"
+            )
+            return expr, "# Hybrid: webhook/event/asset OR a time floor"
+        return asset_expr, "# Hybrid: runs on any/all of webhook, event, asset sources"
     expr, _ = _schedule_literal(spec.get("schedule"), dag_type)
     return expr, "# Time-based schedule"
+
+
+def _dependency_wiring(handles: list[str], deps: dict) -> str:
+    """Emit task-wiring code for a named-handle list.
+
+    Patterns:
+      linear   : h0 -> h1 -> ... -> hn
+      fan_out  : h0 -> [h1..hn] (parallel)
+      fan_in   : [h0..h(n-1)] -> hn (join)
+      diamond  : h0 -> [h1..h(n-1)] -> hn (split then join)
+      cross    : cross_downstream(groups[0], groups[1]); requires deps["groups"]
+      custom   : explicit edges deps["edges"] = [["a","b"], ...]
+    Default (no pattern): assign handles then chain linearly if >1, else call once.
+    """
+    pattern = deps.get("pattern")
+
+    def call(h: str) -> str:
+        return f"{h}()"
+
+    # Assign each task to a variable so handles can be referenced in multiple edges.
+    assigns = [f"        {h} = {call(h)}" for h in handles]
+
+    if not pattern:
+        if len(handles) == 1:
+            return "        " + call(handles[0])
+        body = "\n".join(assigns)
+        return body + "\n        chain(" + ", ".join(handles) + ")"
+
+    if pattern == "linear":
+        body = "\n".join(assigns)
+        return body + "\n        chain(" + ", ".join(handles) + ")"
+
+    if pattern == "fan_out":
+        head, rest = handles[0], handles[1:]
+        body = "\n".join(assigns)
+        return body + f"\n        chain({head}, [{', '.join(rest)}])"
+
+    if pattern == "fan_in":
+        *rest, tail = handles
+        body = "\n".join(assigns)
+        return body + f"\n        chain([{', '.join(rest)}], {tail})"
+
+    if pattern == "diamond":
+        head, middle, tail = handles[0], handles[1:-1], handles[-1]
+        body = "\n".join(assigns)
+        return body + f"\n        chain({head}, [{', '.join(middle)}], {tail})"
+
+    if pattern == "cross":
+        groups = deps.get("groups")
+        body = "\n".join(assigns)
+        g1 = ", ".join(groups[0])
+        g2 = ", ".join(groups[1])
+        return body + f"\n        cross_downstream([{g1}], [{g2}])"
+
+    if pattern == "custom":
+        body = "\n".join(assigns)
+        edges = "\n".join(f"        {a} >> {b}" for a, b in deps.get("edges", []))
+        return body + "\n" + edges
+
+    # Fallback
+    return "\n".join(assigns)
 
 
 def generate(spec: dict) -> str:
@@ -141,6 +241,23 @@ event_asset = Asset("{dag_id}_event", watchers=[_watcher])
 
 '''
 
+    if dag_type == "hybrid":
+        hy = spec.get("hybrid", {})
+        watcher_blocks = []
+        for i, ev in enumerate(hy.get("events", [])):
+            watcher_blocks.append(
+                f'''_event_trigger_{i} = SqsSensorTrigger(
+    sqs_queue={json.dumps(ev["uri"])},
+    aws_conn_id="aws_default",
+)
+_event_{i} = Asset(
+    "{dag_id}_event_{i}",
+    watchers=[AssetWatcher(name="{dag_id}_watcher_{i}", trigger=_event_trigger_{i})],
+)'''
+            )
+        if watcher_blocks:
+            pre_dag = "\n".join(watcher_blocks) + "\n\n\n"
+
     # task bodies
     task_lines = []
     if beam:
@@ -148,9 +265,9 @@ event_asset = Asset("{dag_id}_event", watchers=[_watcher])
         task_lines.append("        beam_job")
     else:
         tasks = spec.get("tasks") or [{"id": "run"}]
-        prev = None
         defs = []
-        calls = []
+        # Instantiate each task into a named handle so we can wire arbitrary graphs.
+        handles = []
         for t in tasks:
             tid = t["id"]
             defs.append(
@@ -158,14 +275,11 @@ event_asset = Asset("{dag_id}_event", watchers=[_watcher])
         def {tid}() -> None:
             ...'''
             )
-            calls.append(f"{tid}()")
+            handles.append(tid)
         task_lines.append("\n\n".join(defs))
-        if len(calls) > 1:
-            # chain them
-            task_lines.append("\n        from airflow.sdk import chain")
-            task_lines.append("        chain(" + ", ".join(calls) + ")")
-        else:
-            task_lines.append("        " + calls[0])
+
+        wiring = _dependency_wiring(handles, spec.get("dependencies", {}))
+        task_lines.append(wiring)
 
     outlet = ""
     if spec.get("asset_out") and not beam:

@@ -22,6 +22,10 @@ pass rate.
 | `event-driven-sqs` | Event-driven | `AssetWatcher`, `SqsSensorTrigger`, schedule on watched asset |
 | `beam-python-dataflow` | Time interval + Beam | `BeamRunPythonPipelineOperator`, `DataflowRunner`, `deferrable=True` |
 | `beam-java-flink` | Time interval + Beam | `BeamRunJavaPipelineOperator`, `FlinkRunner`, `timedelta` schedule, job class |
+| `fan-out-fan-in-diamond` | Dependency wiring | `chain(head, [parallel...], tail)` diamond graph |
+| `cross-dependencies` | Dependency wiring | `cross_downstream` all-to-all edges |
+| `hybrid-webhook-event-asset-timefloor` | Hybrid triggers | `AssetOrTimeSchedule` + `AssetAny` over webhook/event/asset + cron floor |
+| `hybrid-event-or-asset-and` | Hybrid triggers | `AssetAll` (both must fire), no time floor |
 
 Every eval also runs the static validator (`scripts/validate_dag.py`), which asserts the file
 parses, uses the Task SDK, has no removed 3.x APIs, sets required `@dag` kwargs, has unique task

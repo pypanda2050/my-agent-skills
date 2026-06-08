@@ -10,7 +10,9 @@ description: >
   Use this skill whenever the user wants to author, scaffold, or generate an Airflow DAG, mentions
   Airflow 3.0 assets/datasets, deferrable/async operators, event-driven or message-queue triggered
   pipelines, cron/interval scheduling, or wants to launch a Beam/Dataflow/Flink/Spark job from
-  Airflow — even if they only describe the pipeline in plain language without naming Airflow.
+  Airflow. Also covers task-dependency wiring (linear, fan-in, fan-out, cross/complex graphs) and
+  hybrid trigger DAGs combining event-driven, async-asset, time, and webhook sources in one
+  schedule — even if they only describe the pipeline in plain language without naming Airflow.
 ---
 
 # Airflow 3.0 DAG Generator
@@ -40,6 +42,8 @@ no `SubDagOperator`, no `schedule_interval=`, no SLAs).
 | "trigger when a message arrives", SQS/Kafka/Pub-Sub, external events | **Event-driven** | `references/event_driven.md` |
 | "every day at 6am", cron, `@daily`, `timedelta`, backfill | **Time interval** | `references/scheduling.md` |
 | "run a Beam/Dataflow/Flink/Spark job" | (any of the above) + Beam | `references/beam_integration.md` |
+| "linear/fan-in/fan-out/diamond", parallel branches, joins, cross/complex graphs, trigger rules | **Dependency wiring** | `references/dependency_patterns.md` |
+| "combine webhook + event + asset", "run on either/both triggers", time floor + events | **Hybrid triggers** | `references/hybrid_triggers.md` |
 
 ## Core authoring rules (Airflow 3.0)
 
@@ -65,6 +69,8 @@ The power of Airflow 3.0 is mixing these. Common combos:
 - **Time interval + asset trigger**: `schedule=AssetOrTimeSchedule(timetable=CronTriggerTimetable("0 6 * * *", timezone="UTC"), assets=[Asset("s3://bucket/raw")])` — runs daily *and* whenever the raw asset updates.
 - **Event-driven → Beam**: AssetWatcher on an SQS queue triggers a DAG whose single task launches a Dataflow job (see `beam_integration.md`).
 - **Async asset producer → consumer chain**: an `@asset` task produces `Asset("warehouse.clean")`; a downstream DAG schedules on that asset.
+- **Webhook + event + asset, with time floor**: model the webhook as `Asset("webhook://...")`, combine with a queue `AssetWatcher` and an upstream asset via `AssetAny`, and wrap in `AssetOrTimeSchedule` for a guaranteed cadence (see `hybrid_triggers.md`).
+- **Fan-out → fan-in inside any of these**: e.g. an event-driven DAG that fans a payload out to parallel workers then joins with a `trigger_rule` on the reducer (see `dependency_patterns.md`).
 
 ## Output expectations
 
