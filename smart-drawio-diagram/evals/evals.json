@@ -1,0 +1,31 @@
+{
+  "skill_name": "smart-drawio-diagram",
+  "evals": [
+    {
+      "id": 0,
+      "eval_name": "ecommerce-microservices-30-nodes",
+      "prompt": "Create a professional draw.io architecture diagram of our e-commerce platform and export it to PNG. Components: Web App and Mobile App clients; edge layer with CDN, WAF, Load Balancer, API Gateway; microservices: Auth Service, Users Service, Catalog Service, Orders Service, Payments Service, Notifications Service, Search Service; data layer: PostgreSQL (users+orders), MongoDB (catalog), Redis cache, Elasticsearch; Kafka event bus with a dead-letter queue and an async worker; external services: Stripe, SendGrid, Auth0; observability: Prometheus and Grafana monitoring the services. Label every connection with its protocol (HTTPS, gRPC, SQL, events, ...). The diagram must look professional with no overlapping or stacked shapes. Save the files as ecommerce.drawio and ecommerce.png.",
+      "expected_output": "ecommerce.drawio (valid mxGraph XML, ~25-30 nodes in tier containers, labeled edges, zero geometry errors) plus ecommerce.png rendering of it",
+      "files": [],
+      "assertions": [
+        "ecommerce.drawio exists and parses as mxGraph XML with at least 20 vertices",
+        "quality gate reports zero geometry errors (no overlapping/stacked nodes, children inside containers, labels fit, no dangling edges)",
+        "ecommerce.png exists and is a non-trivial image (>10KB)",
+        "at least 60% of edges carry a label"
+      ]
+    },
+    {
+      "id": 1,
+      "eval_name": "streaming-data-pipeline-LR",
+      "prompt": "Draw a left-to-right draw.io diagram of our real-time analytics pipeline: mobile and web SDKs send events to an Ingestion API, which produces to Kafka (with a Schema Registry). Flink jobs consume: sessionization, enrichment, and aggregation, writing to ClickHouse and an S3 data lake. dbt models transform ClickHouse data for Superset dashboards. There is also a batch path: Airflow orchestrates Spark jobs that read raw events from S3 and backfill ClickHouse. Include Prometheus monitoring. Label the data flows. Export to PNG as well. Save as pipeline.drawio and pipeline.png.",
+      "expected_output": "pipeline.drawio (valid mxGraph XML, left-to-right flow, ~15-20 nodes, labeled edges, zero geometry errors) plus pipeline.png",
+      "files": [],
+      "assertions": [
+        "pipeline.drawio exists and parses as mxGraph XML with at least 14 vertices",
+        "quality gate reports zero geometry errors (no overlapping/stacked nodes, children inside containers, labels fit, no dangling edges)",
+        "pipeline.png exists and is a non-trivial image (>10KB)",
+        "at least 60% of edges carry a label"
+      ]
+    }
+  ]
+}
