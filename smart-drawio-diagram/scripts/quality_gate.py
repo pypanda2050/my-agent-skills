@@ -33,6 +33,10 @@ Rules (E = error, blocks the gate; W = warning, reported only):
                    flows over them)
   W-ASPECT         drawing is extremely elongated (>4:1)
   W-DENSITY        nodes-per-area extremely high; diagram probably cramped
+  W-FLAT-ZONE      a big lightly-filled rectangle has real nodes placed on top
+                   of it as flat siblings instead of a real swimlane container
+                   (visually fine — e.g. draw.io CLI renders it correctly —
+                   but the group can't be dragged/resized as a unit)
 
 Auto-fixes applied by --fix (safe, geometry-only):
   * push apart overlapping/too-close sibling nodes (iterative separation)
@@ -59,6 +63,27 @@ from drawio_tools import (  # noqa: E402
 MIN_GAP_DEFAULT = 16.0
 STACK_RATIO = 0.30
 CROSSING_WARN = 6
+BACKDROP_CONTAIN_FRAC = 0.97   # smaller box this covered by the bigger one
+BACKDROP_AREA_RATIO = 2.2      # bigger box must be at least this many times larger
+
+
+def backdrop_pair(a: Node, b: Node):
+    """Detect the common draw.io pattern of a large, lightly-filled rectangle
+    used as a visual 'zone' backdrop, with real nodes as flat siblings placed
+    on top of it (no formal swimlane/container nesting). Returns
+    (backdrop_node, contained_node) if this pair matches that pattern, else
+    None. This must run before overlap/stacking checks — otherwise every
+    zone backdrop looks like every one of its 'children' is stacked on it."""
+    area_a, area_b = a.w * a.h, b.w * b.h
+    if area_a == 0 or area_b == 0:
+        return None
+    big, small = (a, b) if area_a >= area_b else (b, a)
+    if (big.w * big.h) < BACKDROP_AREA_RATIO * (small.w * small.h):
+        return None
+    inter = overlap_area(a.bbox, b.bbox)
+    if inter / (small.w * small.h) < BACKDROP_CONTAIN_FRAC:
+        return None
+    return big, small
 
 
 # ------------------------------------------------------------------- checks
@@ -78,14 +103,28 @@ def run_checks(model: Model, min_gap: float) -> list:
 
     real_nodes = {k: n for k, n in model.nodes.items() if n.w > 0 and n.h > 0}
 
+    # Pure `style="text;..."` cells (titles, legend lines, captions) are
+    # annotations, not architectural shapes: they have no fill/border, are
+    # allowed to sit close to other things or slightly overflow their box,
+    # and were never meant to have edges. Checking them like real nodes is
+    # what produces false positives on diagrams that include a title or a
+    # legend — a very common, legitimate pattern.
+    annotation_ids = {n.id for n in real_nodes.values() if n.style.get("text") == "1"}
+
     # --- sibling overlap / stacking / gap
     by_parent = {}
     for n in real_nodes.values():
         by_parent.setdefault(n.parent, []).append(n)
+    flat_zones = {}  # backdrop node id -> list of node ids placed on it
     for parent, sibs in by_parent.items():
         for a, b in combinations(sibs, 2):
-            # container-vs-node at the same level: containment is checked
-            # separately; only flag if both are plain nodes or both containers
+            if a.id in annotation_ids or b.id in annotation_ids:
+                continue
+            bd = backdrop_pair(a, b)
+            if bd is not None:
+                backdrop, contained = bd
+                flat_zones.setdefault(backdrop.id, []).append(contained.id)
+                continue
             inter = overlap_area(a.bbox, b.bbox)
             if inter > 0:
                 smaller = min(a.w * a.h, b.w * b.h)
@@ -102,6 +141,14 @@ def run_checks(model: Model, min_gap: float) -> list:
                 add("E-GAP", "error",
                     f"'{a.label or a.id}' and '{b.label or b.id}' are closer than "
                     f"{min_gap:.0f}px", [a.id, b.id])
+    for backdrop_id, child_ids in flat_zones.items():
+        backdrop = model.nodes[backdrop_id]
+        add("W-FLAT-ZONE", "warning",
+            f"'{backdrop.label or backdrop.id}' looks like a background zone "
+            f"rectangle with {len(child_ids)} node(s) placed on top as flat "
+            f"siblings, not a real swimlane container — fine visually, but "
+            f"consider a real container so the group can be moved/resized "
+            f"together", [backdrop_id] + child_ids)
 
     # --- containment
     for n in real_nodes.values():
@@ -134,6 +181,8 @@ def run_checks(model: Model, min_gap: float) -> list:
 
     # --- labels
     for n in real_nodes.values():
+        if n.id in annotation_ids:
+            continue
         fits, _ = label_fits(n)
         if not fits:
             add("E-LABEL-CLIP", "error",
@@ -156,7 +205,7 @@ def run_checks(model: Model, min_gap: float) -> list:
                 exempt.add(n.parent)
                 n = model.nodes[n.parent]
         for n in real_nodes.values():
-            if n.id in exempt or n.is_container:
+            if n.id in exempt or n.is_container or n.id in flat_zones or n.id in annotation_ids:
                 continue
             for p1, p2 in zip(pl, pl[1:]):
                 if seg_intersects_rect(p1, p2, n.bbox):
@@ -190,7 +239,8 @@ def run_checks(model: Model, min_gap: float) -> list:
 
     # --- orphans
     for n in real_nodes.values():
-        if not n.is_container and n.id not in connected and model.edges:
+        if (not n.is_container and n.id not in flat_zones and n.id not in annotation_ids
+                and n.id not in connected and model.edges):
             add("W-ORPHAN", "warning",
                 f"'{n.label or n.id}' has no edges — connect it or remove it", [n.id])
 
@@ -203,7 +253,8 @@ def run_checks(model: Model, min_gap: float) -> list:
             add("W-ASPECT", "warning",
                 f"drawing is {w:.0f}x{h:.0f} ({ratio:.1f}:1) — very elongated; "
                 f"consider wrapping layers")
-        plain = [n for n in real_nodes.values() if not n.is_container]
+        plain = [n for n in real_nodes.values()
+                if not n.is_container and n.id not in flat_zones and n.id not in annotation_ids]
         if plain:
             used = sum(n.w * n.h for n in plain)
             if used / (w * h) > 0.55:
