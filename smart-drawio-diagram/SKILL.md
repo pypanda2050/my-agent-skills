@@ -93,11 +93,18 @@ python3 $SKILL/scripts/quality_gate.py diagram.drawio --json
 ```
 
 The gate parses actual geometry (absolute coordinates, container nesting) and
-fails on: overlapping or stacked nodes, nodes closer than 16px, children
-outside containers or under title strips, dangling edges, labels that can't fit
-their boxes. It warns on: edges passing through unrelated nodes, excessive edge
-crossings, orphan nodes, unlabeled edges, extreme aspect ratio, cramped
-density. Full rule catalog with fix recipes: `references/quality-rules.md`.
+fails on: overlapping/stacked nodes, nodes closer than 16px, children outside
+containers or under title strips, insufficient container padding, dangling
+edges, labels that can't fit their boxes, edges routed through unrelated
+nodes, off-center or unevenly-spaced rows of siblings, and nodes that share a
+color but disagree on the rest of their styling. It warns on: short edge
+labels that may crowd their arrow, labels crossed by another edge, excessive
+edge crossings, orphan nodes, unlabeled edges, extreme aspect ratio, cramped
+density, a missing or incomplete legend, and asymmetric top-level zone
+placement. The JSON output also includes a 0-100 `score` — a supplementary
+signal for whether a fix pass actually helped, not a replacement for the
+PASS/FAIL error count. Full rule catalog with fix recipes:
+`references/quality-rules.md`.
 
 **On FAIL, fix in this order:**
 
@@ -105,22 +112,24 @@ density. Full rule catalog with fix recipes: `references/quality-rules.md`.
    ```bash
    python3 $SKILL/scripts/quality_gate.py diagram.drawio --fix --json
    ```
-   It separates overlapping nodes, grows containers to fit children, enlarges
-   nodes whose labels clip, and snaps to the grid — then re-checks and reports
-   what remains.
+   It separates overlapping nodes, grows containers to fit children, and
+   enlarges nodes whose labels clip — then re-checks and reports what remains.
 2. Fix remaining errors **by editing the XML yourself** — the auto-fixer
-   deliberately won't restructure a layout. Dangling edges, dense crossing
-   webs, or bad layer assignment mean your Step-2 plan was wrong: recompute the
-   affected coordinates rather than nudging boxes one by one.
+   deliberately won't restructure a layout, recenter a row, or reconcile
+   styling. Dangling edges, dense crossing webs, off-center rows, or bad layer
+   assignment mean your Step-2 plan was wrong: recompute the affected
+   coordinates using the formulas in `references/layout-recipes.md` rather
+   than nudging boxes one by one.
 3. Re-run the gate. Repeat until `"status": "PASS"`.
 
 If the same error survives two fix attempts, stop patching and regenerate that
 region's layout from the Step-2 math — repeated local nudging usually just
 moves the collision somewhere else.
 
-Treat warnings seriously too: `W-EDGE-THROUGH` and `W-CROSSINGS` are the
-difference between "passes" and "looks professional". Fix them when reasonably
-possible (reorder nodes within a layer, add edge waypoints, widen layer gaps).
+Treat warnings seriously too: `W-CROSSINGS` and `W-LABEL-ARROW-OVERLAP` are
+the difference between "passes" and "looks professional". Fix them when
+reasonably possible (reorder nodes within a layer, add edge waypoints, widen
+layer gaps).
 
 ## Step 5 — Headless PNG export
 
@@ -182,3 +191,4 @@ available, export those too (`drawio --export --format pdf …`).
 | `references/xml-format.md` | Before writing your first .drawio XML of the session — mxGraph structure, style strings, color palette |
 | `references/layout-recipes.md` | At Step 2 — layered layout math, container sizing formulas, crossing-reduction, worked example |
 | `references/quality-rules.md` | When the gate reports a rule you need to fix — every rule with cause and fix recipe |
+| `references/house-style-source.md` | The original house style guide (QG-1 through QG-9) the gate's rules are derived from, kept verbatim for provenance |
